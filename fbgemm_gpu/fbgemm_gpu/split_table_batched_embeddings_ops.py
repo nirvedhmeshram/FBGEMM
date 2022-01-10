@@ -2,7 +2,7 @@
 
 # pyre-ignore-all-errors[56]
 
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and its affiliates.
 # All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from itertools import accumulate
 from math import log2
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
+from typing import Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import fbgemm_gpu.split_embedding_codegen_lookup_invokers as invokers
 import torch
@@ -251,6 +251,8 @@ class SplitTableBatchedEmbeddingBagsCodegen(nn.Module):
         if self.use_cpu or self.pooling_mode == PoolingMode.NONE:
             assert (
                 output_dtype == SparseType.FP32
+                or output_dtype == SparseType.FP16
+                or output_dtype == SparseType.BF16
             ), "Fused pooled embedding quantization only supported for cuda."
 
         if device is not None:
@@ -1458,84 +1460,6 @@ class DenseTableBatchedEmbeddingBagsCodegen(nn.Module):
             param.uniform_(min_val, max_val)
 
 
-class SequenceEmbeddingCodegen(SplitTableBatchedEmbeddingBagsCodegen):
-    """
-    This class wraps around SplitTableBatchedEmbeddingBagsCodegen to get
-    sequence embedding op: nn.EmbeddingBag(sparse=True)
-    """
-
-    def __init__(
-        self,
-        **kwargs: Any,
-    ) -> None:
-        # assert T == 1
-        assert "embedding_specs" in kwargs
-        assert len(kwargs["embedding_specs"]) == 1
-        super(SequenceEmbeddingCodegen, self).__init__(
-            **kwargs,
-        )
-
-    # @torch.jit.ignore
-    def forward(
-        self,
-        indices: Tensor,
-        offsets: Optional[Tensor] = None,
-        per_sample_weights: Optional[Tensor] = None,
-        feature_requires_grad: Optional[Tensor] = None,
-    ) -> Tensor:
-        offsets = torch.arange(
-            0,
-            indices.numel() + 1,
-            device=indices.device,
-            dtype=torch.int64,
-        )
-        return super(SequenceEmbeddingCodegen, self).forward(
-            indices,
-            offsets,
-            per_sample_weights,
-            feature_requires_grad,
-        )
-
-
-class DenseSequenceEmbeddingCodegen(DenseTableBatchedEmbeddingBagsCodegen):
-    """
-    This class wraps around DenseTableBatchedEmbeddingBagsCodegen to get
-    sequence embedding op, nn.EmbeddingBag(sparse=False)
-    """
-
-    def __init__(
-        self,
-        **kwargs: Any,
-    ) -> None:
-        # assert T == 1
-        assert "embedding_specs" in kwargs
-        assert len(kwargs["embedding_specs"]) == 1
-        super(DenseSequenceEmbeddingCodegen, self).__init__(
-            **kwargs,
-        )
-
-    # @torch.jit.ignore
-    def forward(
-        self,
-        indices: Tensor,
-        offsets: Optional[Tensor] = None,
-        per_sample_weights: Optional[Tensor] = None,
-        feature_requires_grad: Optional[Tensor] = None,
-    ) -> Tensor:
-        offsets = torch.arange(
-            0,
-            indices.numel() + 1,
-            device=indices.device,
-            dtype=torch.int64,
-        )
-        return super(DenseSequenceEmbeddingCodegen, self).forward(
-            indices,
-            offsets,
-            per_sample_weights,
-            feature_requires_grad,
-        )
-
-
 def round_up(a: int, b: int) -> int:
     return int((a + b - 1) // b) * b
 
@@ -1557,6 +1481,11 @@ def unpadded_row_size_in_bytes(dim: int, weight_ty: SparseType) -> int:
     return r
 
 
+def align_to_cacheline(a: int) -> int:
+    # align each table to 128b cache line boundary.
+    return round_up(a, 128)
+
+
 def nbit_construct_split_state(
     embedding_specs: List[Tuple[str, int, int, SparseType, EmbeddingLocation]],
     cacheable: bool,
@@ -1567,11 +1496,6 @@ def nbit_construct_split_state(
     host_size = 0
     uvm_size = 0
     for (_, num_embeddings, embedding_dim, weight_ty, location) in embedding_specs:
-
-        def align_to_cacheline(a: int) -> int:
-            # align each table to 128b cache line boundary.
-            return round_up(a, 128)
-
         embedding_dim = rounded_row_size_in_bytes(embedding_dim, weight_ty)
         state_size = align_to_cacheline(num_embeddings * embedding_dim)
         if location == EmbeddingLocation.HOST:
@@ -1654,6 +1578,13 @@ class IntNBitTableBatchedEmbeddingBagsCodegen(nn.Module):
         weights_tys: List[SparseType] = [e[3] for e in embedding_specs]
         locations: List[EmbeddingLocation] = [e[4] for e in embedding_specs]
 
+        # mixed D is not supported by no bag kernels
+        mixed_D = not all(d == dims[0] for d in dims)
+        if mixed_D:
+            assert (
+                self.pooling_mode != PoolingMode.NONE
+            ), "Mixed dimension tables are only supported for pooling tables."
+
         assert not self.use_cpu or all(
             loc == EmbeddingLocation.HOST for loc in locations
         ), "ComputeDevice.CPU is only for EmbeddingLocation.HOST!"
@@ -1715,10 +1646,6 @@ class IntNBitTableBatchedEmbeddingBagsCodegen(nn.Module):
             "bounds_check_warning",
             torch.tensor([0], device=self.current_device, dtype=torch.int64),
         )
-
-        def align_to_cacheline(a: int) -> int:
-            # align each table to 128b cache line boundary.
-            return round_up(a, 128)
 
         weights_tys_int = [weights_tys[t].as_int() for t in self.feature_table_map]
         self.register_buffer(
@@ -1824,7 +1751,6 @@ class IntNBitTableBatchedEmbeddingBagsCodegen(nn.Module):
         if not self.lxu_cache_weights.numel():
             return
 
-        (indices, offsets) = indices.long(), offsets.long()
         linear_cache_indices = torch.ops.fb.linearize_cache_indices(
             self.cache_hash_size_cumsum,
             indices,
@@ -2079,6 +2005,7 @@ class IntNBitTableBatchedEmbeddingBagsCodegen(nn.Module):
                 cache_sets = (
                     int(1.0 * free_memory / self.max_D_cache) + ASSOC - 1
                 ) // ASSOC
+            cache_sets = 1 if cache_sets == 0 else cache_sets
         cache_load_factor = (
             1.0 * cache_sets * ASSOC / int(cache_state.total_cache_hash_size)
         )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and its affiliates.
 # All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
@@ -397,17 +397,17 @@ def rowwise_adagrad() -> None:
         momentum1[idx] = new_sum_square_grads;
         multiplier = learning_rate / (sqrtf(new_sum_square_grads) + eps);
     }
-    multiplier = __shfl_sync(0xFFFFFFFF, multiplier, 0);
+    multiplier = shfl_sync(multiplier, 0);
     """
     split_weight_update_cpu = """
-        at::acc_type<scalar_t, true> g_local_sum_square = 0.0;
+        at::acc_type<grad_t, true> g_local_sum_square = 0.0;
         for (int64_t d = 0; d < D; ++d) {
             g_local_sum_square += grad_buffer[d] * grad_buffer[d];
         }
         auto g_avg_square = g_local_sum_square / D;
-        at::acc_type<scalar_t, true> new_sum_square_grads = momentum1_host[momentum1_offsets_data[feature_begin] + idx] + g_avg_square;
+        at::acc_type<grad_t, true> new_sum_square_grads = momentum1_host[momentum1_offsets_data[feature_begin] + idx] + g_avg_square;
         momentum1_host[momentum1_offsets_data[feature_begin] + idx] = new_sum_square_grads;
-        at::acc_type<scalar_t, true> multiplier;
+        at::acc_type<grad_t, true> multiplier;
         multiplier = learning_rate / (sqrtf(new_sum_square_grads) + eps);
         for (int64_t d = 0; d < D; ++d) {
             host_weights_data[embedding_begin + d] -= grad_buffer[d] * multiplier;
@@ -474,8 +474,8 @@ def rowwise_weighted_adagrad() -> None:
         multiplier = learning_rate * lambda / (cbrtf(new_sum_square_grads) + eps);
         correction = 1.0 - multiplier * weight_decay;
     }
-    multiplier = __shfl_sync(0xFFFFFFFF, multiplier, 0);
-    correction = __shfl_sync(0xFFFFFFFF, correction, 0);
+    multiplier = shfl_sync(multiplier, 0);
+    correction = shfl_sync(correction, 0);
     """
     split_weight_update_cpu = """
         // weight_decay not supported for cpu version
@@ -636,7 +636,7 @@ def partial_rowwise_lamb() -> None:
         m2 = beta2 * momentum2[idx] + (1.0 - beta2) * g_avg_square;
         momentum2[idx] = m2;
     }
-    m2 = __shfl_sync(0xFFFFFFFF, m2, 0);
+    m2 = shfl_sync(m2, 0);
     at::acc_type<cache_t, true> m2_hat = 1.0 / (sqrtf((m2 / (1.0 - powf(beta2, iter)))) + eps);
 
     at::acc_type<cache_t, true> weight_sum_sq = 0.0;
@@ -772,7 +772,7 @@ def partial_rowwise_adam() -> None:
         momentum2[idx] = v_t;
         v_hat_t = v_t / (1.0 - powf(beta2, iter));
     }
-    v_hat_t = __shfl_sync(0xFFFFFFFF, v_hat_t, 0);
+    v_hat_t = shfl_sync(v_hat_t, 0);
     """
 
     split_weight_update = """
@@ -884,16 +884,28 @@ def forward_split() -> None:
 
 
 def forward_quantized() -> None:
+    @dataclass
+    class elem_type:
+        enum_name: str
+        cpp_type_name: str
+
+    type_map = {
+        32: elem_type("FP32", "float"),
+        16: elem_type("FP16", "__half2"),
+        8: elem_type("INT8", "uint32_t"),
+        4: elem_type("INT4", "uint32_t"),
+    }
+
     template = env.get_template("embedding_forward_quantized_split_template.cu")
-    src_cu = template.render(weighted=False)
+    src_cu = template.render(weighted=False, type_map=type_map)
     write("gen_embedding_forward_quantized_split_unweighted_codegen_cuda.cu", src_cu)
-    src_cu = template.render(weighted=True)
+    src_cu = template.render(weighted=True, type_map=type_map)
     write("gen_embedding_forward_quantized_split_weighted_codegen_cuda.cu", src_cu)
 
     template = env.get_template("embedding_forward_quantized_cpu_template.cpp")
-    src_cu = template.render(weighted=False)
+    src_cu = template.render(weighted=False, type_map=type_map)
     write("gen_embedding_forward_quantized_unweighted_codegen_cpu.cpp", src_cu)
-    src_cu = template.render(weighted=True)
+    src_cu = template.render(weighted=True, type_map=type_map)
     write("gen_embedding_forward_quantized_weighted_codegen_cpu.cpp", src_cu)
 
 

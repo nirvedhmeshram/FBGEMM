@@ -1,11 +1,11 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
  */
 #pragma once
-#include <stdint.h>
+#include <cstdint>
 
 namespace {
 
@@ -16,7 +16,8 @@ enum class SparseType : uint8_t {
   INT8 = 2,
   INT4 = 3,
   INT2 = 4,
-  INVALID = 5,
+  BF16 = 5,
+  INVALID = 6,
 };
 
 enum class PoolingMode : uint8_t { SUM = 0, MEAN = 1, NONE = 2 };

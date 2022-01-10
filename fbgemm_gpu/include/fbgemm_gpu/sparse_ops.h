@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
@@ -85,11 +85,28 @@ permute_sparse_data_cpu(
     const c10::optional<int64_t>& permuted_lengths_sum);
 
 at::Tensor _float_to_fused8bitrowwise_gpu(const at::Tensor& input);
+at::Tensor _half_to_fused8bitrowwise_gpu(const at::Tensor& input);
 at::Tensor _fused8bitrowwise_to_float_gpu(const at::Tensor& input);
+at::Tensor _fused8bitrowwise_to_half_gpu(const at::Tensor& input);
+at::Tensor float_to_fused8bitrowwise_cpu(const at::Tensor& input);
+at::Tensor half_to_fused8bitrowwise_cpu(const at::Tensor& input);
+at::Tensor fused8bitrowwise_to_float_cpu(const at::Tensor& input);
+at::Tensor fused8bitrowwise_to_half_cpu(const at::Tensor& input);
+
+at::Tensor _fused8bitrowwise_to_float_mixed_dim_gpu(
+    const at::Tensor& input,
+    const at::Tensor& D_offsets,
+    const int64_t output_dtype);
 at::Tensor _float_to_fusednbitrowwise_gpu(
     const at::Tensor& input,
     const int64_t bit_rate);
+at::Tensor _half_to_fusednbitrowwise_gpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
 at::Tensor _fusednbitrowwise_to_float_gpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
+at::Tensor _fusednbitrowwise_to_half_gpu(
     const at::Tensor& input,
     const int64_t bit_rate);
 at::Tensor& _fused8bitrowwise_to_float_cpu_out(
@@ -98,6 +115,18 @@ at::Tensor& _fused8bitrowwise_to_float_cpu_out(
 at::Tensor& _float_to_fused8bitrowwise_cpu_out(
     at::Tensor& output,
     const at::Tensor& input);
+at::Tensor float_to_fusednbitrowwise_cpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
+at::Tensor half_to_fusednbitrowwise_cpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
+at::Tensor fusednbitrowwise_to_float_cpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
+at::Tensor fusednbitrowwise_to_half_cpu(
+    const at::Tensor& input,
+    const int64_t bit_rate);
 
 at::Tensor reorder_batched_ad_lengths_gpu(
     const at::Tensor& cat_ad_lengths,
@@ -163,10 +192,32 @@ at::Tensor jagged_2d_to_dense_backward_cuda(
     at::Tensor offsets,
     int32_t total_L);
 
+std::tuple<std::vector<at::Tensor>, std::vector<at::Tensor>>
+stacked_jagged_2d_to_dense_forward_cuda(
+    at::Tensor values,
+    at::Tensor lengths,
+    const std::vector<int64_t>& offset_per_key,
+    const std::vector<int64_t>& max_lengths_per_key);
+
+at::Tensor stacked_jagged_2d_to_dense_backward_cuda(
+    int64_t B,
+    int64_t D,
+    int64_t total_L,
+    const std::vector<at::Tensor>& grad_padded_values_per_key,
+    const std::vector<at::Tensor>& offsets_tensor_per_key,
+    const std::vector<int64_t>& offset_per_key);
+
 at::Tensor jagged_1d_to_dense_gpu(
     at::Tensor values,
     at::Tensor offsets,
     int64_t max_L,
+    int64_t padding_value);
+
+std::vector<at::Tensor> stacked_jagged_1d_to_dense_gpu(
+    at::Tensor values,
+    at::Tensor lengths,
+    const std::vector<int64_t>& offset_per_key,
+    const std::vector<int64_t>& max_lengths_per_key,
     int64_t padding_value);
 
 // Divide the prediction range (e.g., [0, 1]) into B bins. In each bin, use

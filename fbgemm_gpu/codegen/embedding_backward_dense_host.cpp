@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,8 @@
 #include <ATen/core/op_registration/op_registration.h>
 #include <torch/script.h>
 
-#include "codegen/embedding_common.h"
+#include "fbgemm_gpu/embedding_common.h"
+#include "fbgemm_gpu/sparse_ops_utils.h"
 
 using Tensor = at::Tensor;
 
@@ -110,7 +111,11 @@ class SplitLookupFunction_Dense_Op
     ctx->saved_data["total_hash_size_bits"] = total_hash_size_bits;
     ctx->saved_data["pooling_mode"] = pooling_mode;
 
+#ifdef __HIP_PLATFORM_HCC__
+    constexpr int32_t BT_block_size = 64;
+#else
     constexpr int32_t BT_block_size = 32;
+#endif
     if (!indice_weights.has_value()) {
       return {dense_embedding_codegen_forward_unweighted_cuda(
           dev_weights,
@@ -158,8 +163,13 @@ class SplitLookupFunction_Dense_Op
 
     TORCH_CHECK(grad_outputs.size() == 1);
 
+#ifdef __HIP_PLATFORM_HCC__
+    constexpr int32_t BT_block_size = 64;
+    constexpr int32_t max_segment_length_per_warp = 64;
+#else
     constexpr int32_t BT_block_size = 32;
     constexpr int32_t max_segment_length_per_warp = 32;
+#endif
     using torch::autograd::Variable;
 
     auto grad_output = grad_outputs[0];
@@ -385,19 +395,15 @@ Tensor split_embedding_codegen_lookup_dense_function(
 TORCH_LIBRARY_FRAGMENT(fb, m) {
   m.def(
       "dense_embedding_codegen_lookup_function(Tensor dev_weights, Tensor weights_offsets, Tensor D_offsets, int total_D, int max_D, Tensor hash_size_cumsum, int total_hash_size_bits, Tensor indices, Tensor offsets, int pooling_mode, Tensor? indice_weights, Tensor? feature_requires_grad) -> Tensor");
-  m.impl(
+  DISPATCH_TO_CUDA(
       "dense_embedding_codegen_lookup_function",
-      torch::dispatch(
-          c10::DispatchKey::CUDA,
-          TORCH_FN(split_embedding_codegen_lookup_dense_function)));
+      split_embedding_codegen_lookup_dense_function);
 }
 
 TORCH_LIBRARY_FRAGMENT(fbgemm, m) {
   m.def(
       "dense_embedding_codegen_lookup_function(Tensor dev_weights, Tensor weights_offsets, Tensor D_offsets, int total_D, int max_D, Tensor hash_size_cumsum, int total_hash_size_bits, Tensor indices, Tensor offsets, int pooling_mode, Tensor? indice_weights, Tensor? feature_requires_grad) -> Tensor");
-  m.impl(
+  DISPATCH_TO_CUDA(
       "dense_embedding_codegen_lookup_function",
-      torch::dispatch(
-          c10::DispatchKey::CUDA,
-          TORCH_FN(split_embedding_codegen_lookup_dense_function)));
+      split_embedding_codegen_lookup_dense_function);
 }

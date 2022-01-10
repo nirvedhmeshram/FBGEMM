@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,7 +10,7 @@
 #include <ATen/core/TensorAccessor.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
-#include <THC/THCAtomics.cuh>
+#include <ATen/cuda/Atomic.cuh>
 
 // clang-format off
 #include "fbgemm_gpu/cub_namespace_prefix.cuh"
@@ -26,7 +26,7 @@
 #include <limits>
 #include <mutex>
 
-#include "codegen/embedding_common.h"
 #include "fbgemm_gpu/dispatch_macros.h"
+#include "fbgemm_gpu/embedding_common.h"
 #include "fbgemm_gpu/fbgemm_cuda_utils.cuh"
 #include "fbgemm_gpu/sparse_ops_utils.h"

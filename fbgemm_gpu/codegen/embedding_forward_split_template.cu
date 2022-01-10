@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
@@ -127,16 +127,16 @@ __global__ void {{ "dense" if dense else "split" }}_embedding{{ "_nobag" if noba
         at::acc_type<cache_t, true> idx_weight = l < L ? indice_weights[indices_start + l] : 0;
         {% endif %}
         for (auto j = 0; j < kWarpSize && l_start + j < L; ++j) {
-            int64_t idx_j = __shfl_sync(0xFFFFFFFF, idx, j);
+            int64_t idx_j = shfl_sync(idx, j);
             {% if nobag %}
             int64_t output_j = indices_start + l_start + j;
             {% endif %}
             {% if not dense %}
-            int32_t cache_idx_j = __shfl_sync(0xFFFFFFFF, cache_idx, j);
+            int32_t cache_idx_j = shfl_sync(cache_idx, j);
             {% endif %}
 
             {% if weighted %}
-            at::acc_type<cache_t, true> idx_weight_j = __shfl_sync(0xFFFFFFFF, idx_weight, j);
+            at::acc_type<cache_t, true> idx_weight_j = shfl_sync(idx_weight, j);
             {% endif %}
 
             {% if not dense %}
@@ -357,11 +357,14 @@ Tensor {{ "dense" if dense else "split" }}_embedding{{ "_nobag" if nobag else ""
     }
     {% else %}
     SparseType o_dtype = static_cast<SparseType>(output_dtype);
-    TORCH_CHECK(o_dtype == SparseType::FP32 || o_dtype == SparseType::FP16 || o_dtype == SparseType::INT8);
+    TORCH_CHECK(o_dtype == SparseType::FP32 || o_dtype == SparseType::FP16 ||
+                o_dtype == SparseType::BF16 || o_dtype == SparseType::INT8);
     if (o_dtype == SparseType::FP32) {
         output = at::empty({B, total_D}, dev_weights.options().dtype(at::kFloat));
     } else if (o_dtype == SparseType::FP16) {
         output = at::empty({B, total_D}, dev_weights.options().dtype(at::kHalf));
+    } else if (o_dtype == SparseType::BF16) {
+        output = at::empty({B, total_D}, dev_weights.options().dtype(at::kBFloat16));
     } else if (o_dtype == SparseType::INT8) {
         output = at::empty({B, int64_t(total_D + T * kINT8QparamsBytes)}, dev_weights.options().dtype(at::kByte));
     }

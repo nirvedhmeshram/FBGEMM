@@ -1,10 +1,10 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
  */
-#include "codegen/embedding_backward_template_helpers.cuh"
+#include "fbgemm_gpu/embedding_backward_template_helpers.cuh"
 
 using Tensor = at::Tensor;
 using namespace fbgemm_gpu;
@@ -69,7 +69,8 @@ __global__ void bounds_check_indices_kernel(
   }
 
   auto L = indices_end - indices_start;
-  for (auto i = threadIdx.x; i < L; i += fbgemm_gpu::kWarpSize) {
+  for (index_t i = (index_t)threadIdx.x; i < L;
+       i += (index_t)fbgemm_gpu::kWarpSize) {
     auto idx = indices[indices_start + i];
     if (idx == -1) {
       // -1 indicates pruned rows.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  * All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
@@ -127,6 +127,14 @@ TORCH_LIBRARY_IMPL(fbgemm, CUDA, m) {
       fbgemm_gpu::lookup_batched_unary_embedding_function);
   DISPATCH_TO_CUDA("jagged_2d_to_dense", fbgemm_gpu::jagged_2d_to_dense_gpu);
   DISPATCH_TO_CUDA("jagged_1d_to_dense", fbgemm_gpu::jagged_1d_to_dense_gpu);
+  DISPATCH_TO_CUDA(
+      "stacked_jagged_1d_to_dense", fbgemm_gpu::stacked_jagged_1d_to_dense_gpu);
+  DISPATCH_TO_CUDA(
+      "stacked_jagged_2d_to_dense_forward",
+      fbgemm_gpu::stacked_jagged_2d_to_dense_forward_cuda);
+  DISPATCH_TO_CUDA(
+      "stacked_jagged_2d_to_dense_backward",
+      fbgemm_gpu::stacked_jagged_2d_to_dense_backward_cuda);
   DISPATCH_TO_CUDA(
       "histogram_binning_calibration",
       fbgemm_gpu::histogram_binning_calibration_cuda);
