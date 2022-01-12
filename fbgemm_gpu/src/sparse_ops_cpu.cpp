@@ -1136,6 +1136,111 @@ std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_cpu(
   return std::make_tuple(calibrated_prediction, bin_ids);
 }
 
+
+// starting preprocessed version
+template <typename T>
+void _histogram_binning_calibration_by_feature_cpu_kernel(
+    const int64_t num_logits,
+    const int64_t num_bins,
+    const int64_t num_segments,
+    const int64_t num_lengths,
+    const double recalibrate_value,
+    const double step,
+    const int64_t bin_ctr_in_use_after,
+    const double bin_ctr_weight_value,
+    const T* const logit_data,
+    const int64_t* const segment_value_data,
+    const int64_t* const segment_lengths_data,
+    const double* const bin_num_examples_data,
+    const double* const bin_num_positives_data,
+    int64_t* const dense_segment_value_data,
+    T* const calibrated_prediction_data,
+    int64_t* const bin_ids_data) {
+  int k = 0;
+  for (const auto i : c10::irange(num_lengths)) {
+    if (segment_lengths_data[i] > 0) {
+      // Add 1 to distinguish between 0 inserted by densification vs. original
+      // value.
+      dense_segment_value_data[i] = segment_value_data[k] + 1;
+      ++k;
+    }
+  }
+
+  for (const auto i : c10::irange(num_logits)) {
+    const T pre_sigmoid = logit_data[i] + recalibrate_value;
+    const double uncalibrated = 1.0 / (1.0 + std::exp(-pre_sigmoid));
+
+    const int64_t curr_segment_value =
+        dense_segment_value_data[i] > num_segments
+        ? 0
+        : std::max(0L, dense_segment_value_data[i] * num_bins);
+
+    bin_ids_data[i] = (std::ceil(uncalibrated / step) - 1) + curr_segment_value;
+
+    const auto curr_bin_num_examples = bin_num_examples_data[bin_ids_data[i]];
+    if (curr_bin_num_examples > bin_ctr_in_use_after) {
+      const auto curr_bin_ctr =
+          bin_num_positives_data[bin_ids_data[i]] / curr_bin_num_examples;
+      calibrated_prediction_data[i] = curr_bin_ctr * bin_ctr_weight_value +
+          uncalibrated * (1.0 - bin_ctr_weight_value);
+    } else {
+      calibrated_prediction_data[i] = uncalibrated;
+    }
+  }
+}
+
+std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_cpu(
+    const Tensor& logit,
+    const Tensor& segment_value,
+    const Tensor& segment_lengths,
+    int64_t num_segments,
+    const Tensor& bin_num_examples,
+    const Tensor& bin_num_positives,
+    int64_t num_bins,
+    double positive_weight,
+    double lower_bound,
+    double upper_bound,
+    int64_t bin_ctr_in_use_after,
+    double bin_ctr_weight_value) {
+  TENSOR_ON_CPU(logit);
+  TENSOR_ON_CPU(segment_value);
+  TENSOR_ON_CPU(segment_lengths);
+  TENSOR_ON_CPU(bin_num_examples);
+  TENSOR_ON_CPU(bin_num_positives);
+  TORCH_CHECK(bin_num_examples.numel() == bin_num_positives.numel());
+
+  // dense_segment_value is used as a temporary storage.
+  Tensor dense_segment_value =
+      at::zeros({logit.numel()}, segment_value.options());
+  Tensor calibrated_prediction = at::empty_like(logit);
+  Tensor bin_ids = at::empty({logit.numel()}, logit.options().dtype(at::kLong));
+  const double recalibrate_value = std::log(positive_weight);
+  const double step =
+      (upper_bound - lower_bound) / static_cast<double>(num_bins);
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+      logit.type(), "histogram_binning_calibration_by_feature_cpu", [&]() {
+        _histogram_binning_calibration_by_feature_cpu_kernel<scalar_t>(
+            logit.numel(),
+            num_bins,
+            num_segments,
+            segment_lengths.numel(),
+            recalibrate_value,
+            step,
+            bin_ctr_in_use_after,
+            bin_ctr_weight_value,
+            logit.data_ptr<scalar_t>(),
+            segment_value.data_ptr<int64_t>(),
+            segment_lengths.data_ptr<int64_t>(),
+            bin_num_examples.data_ptr<double>(),
+            bin_num_positives.data_ptr<double>(),
+            dense_segment_value.data_ptr<int64_t>(),
+            calibrated_prediction.data_ptr<scalar_t>(),
+            bin_ids.data_ptr<int64_t>());
+      });
+
+  return std::make_tuple(calibrated_prediction, bin_ids);
+}
+//ending preprocessed version
 template <typename T>
 void _generic_histogram_binning_calibration_by_feature_cpu_kernel(
     const int64_t num_logits,
