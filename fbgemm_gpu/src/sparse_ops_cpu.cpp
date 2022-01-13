@@ -1139,7 +1139,7 @@ std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_cpu(
 
 // starting preprocessed version
 template <typename T>
-void _histogram_binning_calibration_by_feature_cpu_kernel(
+void _histogram_binning_calibration_by_feature_preprocess_cpu_kernel(
     const int64_t num_logits,
     const int64_t num_bins,
     const int64_t num_segments,
@@ -1157,12 +1157,13 @@ void _histogram_binning_calibration_by_feature_cpu_kernel(
     T* const calibrated_prediction_data,
     int64_t* const bin_ids_data) {
   int k = 0;
-  for (const auto i : c10::irange(num_lengths)) {
-    if (segment_lengths_data[i] > 0) {
+  for (const auto i : c10::irange(num_lengths-1)) {
+  const auto curr_offset = segment_lengths_data[i];
+  const auto next_offset = segment_lengths_data[i + 1];
+    if (next_offset > curr_offset) {
       // Add 1 to distinguish between 0 inserted by densification vs. original
       // value.
-      dense_segment_value_data[i] = segment_value_data[k] + 1;
-      ++k;
+    dense_segment_value_data[i] = segment_value_data[curr_offset]+1;
     }
   }
 
@@ -1189,7 +1190,7 @@ void _histogram_binning_calibration_by_feature_cpu_kernel(
   }
 }
 
-std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_cpu(
+std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_preprocess_cpu(
     const Tensor& logit,
     const Tensor& segment_value,
     const Tensor& segment_lengths,
@@ -1218,8 +1219,8 @@ std::tuple<Tensor, Tensor> histogram_binning_calibration_by_feature_cpu(
   const double step =
       (upper_bound - lower_bound) / static_cast<double>(num_bins);
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      logit.type(), "histogram_binning_calibration_by_feature_cpu", [&]() {
-        _histogram_binning_calibration_by_feature_cpu_kernel<scalar_t>(
+      logit.type(), "histogram_binning_calibration_by_feature_preprocess_cpu", [&]() {
+        _histogram_binning_calibration_by_feature_preprocess_cpu_kernel<scalar_t>(
             logit.numel(),
             num_bins,
             num_segments,
@@ -1413,6 +1414,8 @@ TORCH_LIBRARY_FRAGMENT(fbgemm, m) {
   m.def(
       "histogram_binning_calibration_by_feature(Tensor logit, Tensor segment_value, Tensor segment_lengths, int num_segments, Tensor bin_num_examples, Tensor bin_num_positives, int num_bins, float positive_weight, float lower_bound, float upper_bound, int bin_ctr_in_use_after, float bin_ctr_weight_value) -> (Tensor, Tensor)");
   m.def(
+      "histogram_binning_calibration_by_feature_preprocess(Tensor logit, Tensor segment_value, Tensor segment_lengths, int num_segments, Tensor bin_num_examples, Tensor bin_num_positives, int num_bins, float positive_weight, float lower_bound, float upper_bound, int bin_ctr_in_use_after, float bin_ctr_weight_value) -> (Tensor, Tensor)");
+  m.def(
       "generic_histogram_binning_calibration_by_feature(Tensor logit, Tensor segment_value, Tensor segment_lengths, int num_segments, Tensor bin_num_examples, Tensor bin_num_positives, Tensor bin_boundaries, float positive_weight, int bin_ctr_in_use_after, float bin_ctr_weight_value) -> (Tensor, Tensor)");
   m.def(
       "segment_sum_csr(int batch_size, Tensor csr_seg, Tensor values) -> Tensor");
@@ -1448,6 +1451,9 @@ TORCH_LIBRARY_IMPL(fbgemm, CPU, m) {
   m.impl(
       "histogram_binning_calibration_by_feature",
       fbgemm_gpu::histogram_binning_calibration_by_feature_cpu);
+  m.impl(
+      "histogram_binning_calibration_by_feature_preprocess",
+      fbgemm_gpu::histogram_binning_calibration_by_feature_preprocess_cpu);
   m.impl(
       "generic_histogram_binning_calibration_by_feature",
       fbgemm_gpu::generic_histogram_binning_calibration_by_feature_cpu);
