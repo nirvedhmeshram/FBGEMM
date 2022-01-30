@@ -31,16 +31,16 @@ def benchmark_hbc_function(
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         # Benchmark code
-        output, _ = func(input)
+        output1, output2 = func(input)
         # Accumulate the time for iters iteration
         end_event.record()
         torch.cuda.synchronize()
         elapsed_time = start_event.elapsed_time(end_event) * 1.0e-3
     else:
         start_time = time.time()
-        output, _ = func(input)
+        output1, output2 = func(input)
         elapsed_time = time.time() - start_time
-    return float(elapsed_time), output
+    return float(elapsed_time), output1, output2
 
 
 @click.command()
@@ -110,8 +110,8 @@ def main(
     num_logits = 5000
     input_data_cpu = torch.rand(num_logits, dtype=torch.float)
 
-    #segment_lengths: Tensor = torch.randint(0, 2, (num_logits,))
-    segment_lengths: Tensor = torch.ones(num_logits,dtype=torch.long)
+    segment_lengths: Tensor = torch.randint(0, 2, (num_logits,))
+    #segment_offsets: Tensor = torch.randint(0, 2, (num_logits,))
     segment_offsets: Tensor = torch.cumsum(segment_lengths,0)
     segment_offsets: Tensor = torch.cat((torch.tensor([0]),segment_offsets),0)
     num_values: int = int(torch.sum(segment_lengths).item())
@@ -199,19 +199,24 @@ def main(
     for step in range(iters + warmup_runs):
         for data_type in data_types:
             curr_input = input_data_cpu.to(data_type)
-            hbc_time, _ = benchmark_hbc_function(
+            hbc_time, _ , __ = benchmark_hbc_function(
                 fbgemm_hbc_cpu,
                 curr_input,
             )
 
-            hbc_by_feature_time, _ = benchmark_hbc_function(
+            hbc_by_feature_time, feature_output1, feature_output2 = benchmark_hbc_function(
                 fbgemm_hbc_by_feature_cpu, curr_input
             )
-            hbc_by_feature_preprocess_time, _ = benchmark_hbc_function(
+
+            hbc_by_feature_preprocess_time, feature_preprocess_output1, feature_preprocess_output2 = benchmark_hbc_function(
                 fbgemm_hbc_by_feature_preprocess_cpu, curr_input
             )
+            torch.testing.assert_allclose(feature_output1,feature_preprocess_output1,rtol=1e-03, atol=1e-03,)
+            torch.testing.assert_allclose(feature_output2,feature_preprocess_output2,rtol=1e-03, atol=1e-03,)
+            print("Success CPU!")
 
-            generic_hbc_by_feature_time, _ = benchmark_hbc_function(
+
+            generic_hbc_by_feature_time, _ , __ = benchmark_hbc_function(
                 fbgemm_generic_hbc_by_feature_cpu, curr_input
             )
             if step >= warmup_runs:
@@ -309,22 +314,25 @@ def main(
 
             for data_type in data_types:
                 curr_input_gpu = input_data_cpu.cuda().to(data_type)
-                hbc_time, _ = benchmark_hbc_function(
+                hbc_time, _ , __ = benchmark_hbc_function(
                     fbgemm_hbc_gpu,
                     curr_input_gpu,
                 )
 
-                hbc_by_feature_time, _ = benchmark_hbc_function(
+                hbc_by_feature_time, feature_output1, feature_output2 = benchmark_hbc_function(
                     fbgemm_hbc_by_feature_gpu,
                     curr_input_gpu,
                 )
                 curr_input_gpu2 = input_data_cpu.cuda().to(data_type)
-                hbc_by_feature_preprocess_time, _ = benchmark_hbc_function(
+                hbc_by_feature_preprocess_time, feature_preprocess_output1, feature_preprocess_output2 = benchmark_hbc_function(
                     fbgemm_hbc_by_feature_preprocess_gpu,
                     curr_input_gpu2,
                 )
+                torch.testing.assert_allclose(feature_output1,feature_preprocess_output1,rtol=1e-03, atol=1e-03,)
+                torch.testing.assert_allclose(feature_output2,feature_preprocess_output2,rtol=1e-03, atol=1e-03,)
+                print("Success GPU!")
                 curr_input_gpu3 = input_data_cpu.cuda().to(data_type)
-                generic_hbc_by_feature_time, _ = benchmark_hbc_function(
+                generic_hbc_by_feature_time, _ , __ = benchmark_hbc_function(
                     fbgemm_generic_hbc_by_feature_gpu,
                     curr_input_gpu3,
                 )
